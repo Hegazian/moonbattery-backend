@@ -23,7 +23,7 @@ def test_register_new_device(client: TestClient, db: Session) -> None:
 
     device = db.scalar(select(Device).where(Device.mac_address == "aa:bb:cc:dd:ee:ff"))
     assert device is not None
-    assert device.serial_number == 1
+    assert device.id == data["serial_number"]
 
 
 def test_register_idempotent(client: TestClient) -> None:
@@ -71,7 +71,8 @@ def test_ping_existing_device(client: TestClient, db: Session) -> None:
     assert data["status"] == "ok"
     assert data["last_ping_at"] is not None
 
-    device = db.scalar(select(Device).where(Device.serial_number == serial))
+    device = db.get(Device, serial)
+    assert device is not None
     assert device.last_ping_at is not None
 
 
@@ -120,7 +121,9 @@ def test_config_create_keys(client: TestClient, db: Session) -> None:
     data = response.json()
     assert sorted(data["updated_keys"]) == ["max_charge", "power_mode"]
 
-    configs = db.scalars(select(Configuration).where(Configuration.device_id == 1)).all()
+    device = db.get(Device, serial)
+    assert device is not None
+    configs = db.scalars(select(Configuration).where(Configuration.device_id == device.id)).all()
     assert len(configs) == 2
 
 
@@ -151,6 +154,14 @@ def test_config_empty_configs(client: TestClient) -> None:
     assert response.status_code == 422
 
 
+def test_config_blank_key(client: TestClient) -> None:
+    reg = client.post("/register", json={"mac_address": "aa:bb:cc:dd:ee:ff"})
+    serial = reg.json()["serial_number"]
+
+    response = client.post("/config", json={"serial_number": serial, "configs": {" ": "value"}})
+    assert response.status_code == 422
+
+
 def test_config_missing_configs(client: TestClient) -> None:
     reg = client.post("/register", json={"mac_address": "aa:bb:cc:dd:ee:ff"})
     serial = reg.json()["serial_number"]
@@ -168,7 +179,8 @@ def test_config_persists_values(client: TestClient, db: Session) -> None:
         json={"serial_number": serial, "configs": {"mode": "sleep", "brightness": "10"}},
     )
 
-    device = db.scalar(select(Device).where(Device.serial_number == serial))
+    device = db.get(Device, serial)
+    assert device is not None
     configs = {
         c.key: c.value
         for c in db.scalars(select(Configuration).where(Configuration.device_id == device.id)).all()

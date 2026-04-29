@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -51,6 +52,16 @@ class ConfigRequest(BaseModel):
     serial_number: int = Field(..., gt=0)
     configs: dict[str, str] = Field(..., min_length=1)
 
+    @field_validator("configs")
+    @classmethod
+    def _validate_configs(cls, v: dict[str, str]) -> dict[str, str]:
+        for key in v:
+            if not key.strip():
+                raise ValueError("Configuration keys must not be blank")
+            if len(key) > 255:
+                raise ValueError("Configuration keys must be 255 characters or less")
+        return v
+
 
 class ConfigResponse(BaseModel):
     serial_number: int
@@ -69,24 +80,24 @@ def register(request: RegisterRequest, db: Session = Depends(get_db)) -> Registe
     existing = db.scalar(select(Device).where(Device.mac_address == request.mac_address))
     if existing:
         return RegisterResponse(
-            serial_number=existing.serial_number,
+            serial_number=existing.id,
             mac_address=existing.mac_address,
             created_at=existing.created_at,
         )
 
     device = Device(mac_address=request.mac_address)
     db.add(device)
-    db.commit()
-    db.refresh(device)
-
-    # Use id as serial_number for simplicity (guaranteed unique, auto-increment)
-    if device.serial_number is None:
-        device.serial_number = device.id
+    try:
         db.commit()
         db.refresh(device)
+    except IntegrityError:
+        db.rollback()
+        device = db.scalar(select(Device).where(Device.mac_address == request.mac_address))
+        if device is None:
+            raise
 
     return RegisterResponse(
-        serial_number=device.serial_number,
+        serial_number=device.id,
         mac_address=device.mac_address,
         created_at=device.created_at,
     )
@@ -95,7 +106,7 @@ def register(request: RegisterRequest, db: Session = Depends(get_db)) -> Registe
 @router.post("/ping", response_model=PingResponse)
 def ping(request: PingRequest, db: Session = Depends(get_db)) -> PingResponse:
     """Record a heartbeat ping and update last contact time."""
-    device = db.scalar(select(Device).where(Device.serial_number == request.serial_number))
+    device = db.get(Device, request.serial_number)
     if device is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
 
@@ -104,7 +115,7 @@ def ping(request: PingRequest, db: Session = Depends(get_db)) -> PingResponse:
     db.refresh(device)
 
     return PingResponse(
-        serial_number=device.serial_number,
+        serial_number=device.id,
         last_ping_at=device.last_ping_at,
     )
 
@@ -112,7 +123,7 @@ def ping(request: PingRequest, db: Session = Depends(get_db)) -> PingResponse:
 @router.post("/config", response_model=ConfigResponse)
 def update_config(request: ConfigRequest, db: Session = Depends(get_db)) -> ConfigResponse:
     """Synchronize one or more configuration key-value pairs for a device."""
-    device = db.scalar(select(Device).where(Device.serial_number == request.serial_number))
+    device = db.get(Device, request.serial_number)
     if device is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
 
