@@ -1,28 +1,30 @@
 """Database engine and session management."""
 
-from collections.abc import AsyncGenerator
+from collections.abc import Generator
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
-from app.config import settings
+from app.settings import DATABASE_URL, ENVIRONMENT
 
-engine = create_async_engine(
-    settings.DATABASE_URL,
-    echo=settings.ENVIRONMENT == "development",
-    future=True,
-)
+if DATABASE_URL.startswith("sqlite"):
+    engine = create_engine(
+        DATABASE_URL,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+        echo=ENVIRONMENT == "development",
+    )
+else:
+    engine = create_engine(DATABASE_URL, echo=ENVIRONMENT == "development")
 
-async_session_maker = async_sessionmaker(
-    bind=engine,
-    expire_on_commit=False,
-    autoflush=False,
-)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
-async def get_session() -> AsyncGenerator[AsyncSession, None]:
-    """Yield an async database session for FastAPI dependency injection."""
-    async with async_session_maker() as session:
-        try:
-            yield session
-        finally:
-            await session.close()
+def get_db() -> Generator[Session, None, None]:
+    """Yield a database session for FastAPI dependency injection."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()

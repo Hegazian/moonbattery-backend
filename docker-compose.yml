@@ -20,14 +20,11 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://moonbattery:moonbattery@db:5432/moonbattery
+      DATABASE_URL: postgresql://moonbattery:moonbattery@db:5432/moonbattery
       ENVIRONMENT: development
     depends_on:
       db:
         condition: service_healthy
-    volumes:
-      - ./app:/app/app
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 volumes:
   postgres_data:

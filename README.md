@@ -1,234 +1,119 @@
 # moonBattery IoT Backend
 
-A production-ready REST API for managing moonBattery energy storage devices. Built with **Python 3.12**, **FastAPI**, and **PostgreSQL**.
+A simple, production-ready REST API for managing moonBattery energy storage devices. Built with **Python 3.12**, **FastAPI**, and **PostgreSQL**.
+
+> **Experience level:** Intermediate with Python, FastAPI, and SQLAlchemy. I chose technologies I am comfortable with and that are well-suited for this scope.
 
 ---
 
-## Features
+## Technology Choices & Justifications
 
-- **Device Registration** — Register a new moonBattery via its unique MAC address and receive a serial number.
-- **Heartbeat Ping** — Devices periodically ping the backend to report liveness.
-- **Configuration Sync** — Synchronize key-value configuration pairs from device to backend.
-- **Auto-generated API Docs** — Interactive Swagger UI at `/docs` and ReDoc at `/redoc`.
-- **Database Migrations** — Managed via Alembic.
-- **Comprehensive Tests** — pytest suite with > 90 % coverage.
-
----
-
-## Technology Stack
-
-| Layer | Technology |
-|-------|------------|
-| Language | Python 3.12 |
-| Framework | FastAPI |
-| Database | PostgreSQL 15 (production) / SQLite (tests) |
-| ORM | SQLModel (SQLAlchemy 2.0 + Pydantic) |
-| Migrations | Alembic |
-| Testing | pytest, pytest-asyncio, httpx |
-| Lint / Format | ruff, mypy |
-| Container | Docker + Docker Compose |
+| Technology | Why It Was Chosen |
+|-----------|-------------------|
+| **Python 3.12** | Allowed by the spec. Readable, widely used, excellent ecosystem. I have intermediate experience. |
+| **FastAPI** | Best modern Python web framework. Automatic OpenAPI docs at `/docs`, built-in Pydantic validation, standard ASGI. Saves writing boilerplate validation and documentation code. |
+| **SQLAlchemy 2.0** | The standard Python ORM. Clean declarative API, works with any SQL database, excellent documentation. More stable and standard than SQLModel (which is a wrapper around SQLAlchemy). |
+| **PostgreSQL** | Production-grade open-source RDBMS. ACID compliance, handles concurrent writes safely (critical for IoT), better data integrity than SQLite. The spec says "database of your choice" — this is the safest production choice. |
+| **Pydantic** | Required by FastAPI for request/response validation. Gives us automatic MAC address format checking and clear 422 errors without manual validation code. |
+| **pytest + TestClient** | The spec requires tests. pytest is the Python standard. FastAPI's `TestClient` gives full HTTP round-trip testing without starting a server. |
+| **Docker + Docker Compose** | The spec requires documenting setup. `docker compose up` gives reviewers a one-command way to run PostgreSQL + the API. This is the simplest possible onboarding. |
+| **Synchronous code** | The spec has 3 simple CRUD endpoints with no concurrency requirements. Async (asyncpg, async SQLAlchemy, aiosqlite) adds significant complexity: greenlet dependencies, special test fixtures, harder debugging. Sync code is simpler, more readable, and easier to test. |
+| **No Alembic** | For 2 tables in a coding challenge, Alembic is overkill. `SQLAlchemy.metadata.create_all()` on startup achieves the same result. In a real production system with many tables and a team, Alembic would be essential. |
+| **No Poetry** | `requirements.txt` is the universal Python standard. Every developer understands it instantly. Poetry adds a learning curve and configuration burden not justified for this scope. |
+| **`os.environ` instead of pydantic-settings** | Overkill for 2 environment variables. `os.environ.get()` has zero dependencies and is immediately obvious. |
+| **Single `app/api.py`** | 3 endpoints do not need 3 router files + a service layer + a schemas file. Consolidating into one file reduces directory sprawl and makes the codebase navigable at a glance. |
 
 ---
 
 ## Quick Start
 
 ### Prerequisites
+- Docker & Docker Compose
 
-- [Docker](https://docs.docker.com/get-docker/) & [Docker Compose](https://docs.docker.com/compose/)
-- Or local Python 3.12+ with `pip`
-
-### Option 1: Docker Compose (Recommended)
-
+### Run with Docker Compose
 ```bash
-# Clone / navigate to project directory
-cd moonbattery-backend
-
-# Start PostgreSQL + API server
 docker compose up --build
-
-# API will be available at http://localhost:8000
-# Swagger UI: http://localhost:8000/docs
 ```
+The API is available at `http://localhost:8000`.
+Interactive docs: `http://localhost:8000/docs`
 
-Run database migrations manually (if needed):
+### Run Tests
 ```bash
-docker compose run --rm app alembic upgrade head
-```
-
-### Option 2: Local Development
-
-```bash
-# Install dependencies
-pip install -r requirements.txt  # or poetry install
-
-# Set environment variables (or create .env)
-export DATABASE_URL="postgresql+asyncpg://user:pass@localhost:5432/moonbattery"
-
-# Run migrations
-alembic upgrade head
-
-# Start development server
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+pip install -r requirements.txt
+pytest -q
 ```
 
 ---
 
-## API Usage
+## API Endpoints
 
 ### Register a Device
-
 ```bash
 curl -X POST http://localhost:8000/register \
   -H "Content-Type: application/json" \
   -d '{"mac_address": "aa:bb:cc:dd:ee:ff"}'
 ```
-
 **Response `201 Created`:**
 ```json
-{
-  "serial_number": 1,
-  "mac_address": "aa:bb:cc:dd:ee:ff",
-  "created_at": "2024-01-15T09:30:00+00:00"
-}
+{"serial_number": 1, "mac_address": "aa:bb:cc:dd:ee:ff", "created_at": "2024-01-15T09:30:00"}
 ```
 
 ### Ping a Device
-
 ```bash
 curl -X POST http://localhost:8000/ping \
   -H "Content-Type: application/json" \
   -d '{"serial_number": 1}'
 ```
-
 **Response `200 OK`:**
 ```json
-{
-  "serial_number": 1,
-  "last_ping_at": "2024-01-15T10:00:00+00:00",
-  "status": "ok"
-}
+{"serial_number": 1, "last_ping_at": "2024-01-15T10:00:00", "status": "ok"}
 ```
 
 ### Update Configuration
-
 ```bash
 curl -X POST http://localhost:8000/config \
   -H "Content-Type: application/json" \
-  -d '{
-    "serial_number": 1,
-    "configs": {
-      "power_mode": "eco",
-      "max_charge_rate": "80"
-    }
-  }'
+  -d '{"serial_number": 1, "configs": {"power_mode": "eco", "max_charge": "80"}}'
 ```
-
 **Response `200 OK`:**
 ```json
-{
-  "serial_number": 1,
-  "updated_keys": ["power_mode", "max_charge_rate"],
-  "status": "ok"
-}
-```
-
----
-
-## Running Tests
-
-### Inside Docker
-```bash
-docker compose run --rm app pytest -q
-```
-
-### Locally
-```bash
-pytest -q
-```
-
-### With Coverage
-```bash
-pytest --cov=app --cov-report=term-missing
-```
-
----
-
-## Project Structure
-
-```
-.
-├── app/
-│   ├── __init__.py
-│   ├── main.py              # FastAPI app factory
-│   ├── config.py            # Environment settings
-│   ├── database.py          # DB engine & session
-│   ├── models.py            # SQLModel tables
-│   ├── schemas.py           # Pydantic request/response models
-│   ├── services.py          # Business logic
-│   ├── dependencies.py      # FastAPI DI
-│   └── routers/
-│       ├── __init__.py
-│       ├── register.py
-│       ├── ping.py
-│       └── config.py
-├── tests/
-│   ├── conftest.py          # pytest fixtures
-│   ├── test_register.py
-│   ├── test_ping.py
-│   └── test_config.py
-├── alembic/                 # Database migrations
-├── docs/                    # Project documentation
-│   ├── 01-requirements.md
-│   ├── 02-design.md
-│   ├── 03-implementation-plan.md
-│   └── 04-test-plan.md
-├── Dockerfile
-├── docker-compose.yml
-├── pyproject.toml
-└── README.md
+{"serial_number": 1, "updated_keys": ["power_mode", "max_charge"], "status": "ok"}
 ```
 
 ---
 
 ## Security Considerations (Bonus)
 
-This section documents how communication between moonBattery devices and the backend should be secured in a production deployment.
+### Transport
+- All endpoints must use **HTTPS** with TLS 1.2+.
 
-### Transport Layer Security (TLS)
-
-- **All endpoints must use HTTPS** with TLS 1.2 or higher.
-- Devices should validate the server certificate (pinning recommended for IoT).
-
-### Authentication by Endpoint
-
-#### `/register` — Production-Line Authentication
-- Called by **trusted manufacturing equipment** during device production.
-- **Recommended:** API Key passed in a custom header (`X-API-Key`).
-- **Alternative:** Mutual TLS (mTLS) where both client and server present certificates.
-- API keys should be rotated regularly and stored in a secrets manager (e.g., HashiCorp Vault, AWS Secrets Manager).
-
-#### `/ping` and `/config` — Device Authentication
-- Called by **deployed moonBattery devices** in the field.
-- **Recommended:** Bearer Token (JWT or opaque token) issued at registration time.
-  - Token includes claims: `serial_number`, `iat`, `exp`.
-  - Short expiration (e.g., 24 hours) with a refresh endpoint.
-- **Alternative:** HMAC-signed requests using a per-device shared secret injected during production.
-  - Device signs the request payload + timestamp.
-  - Backend verifies the signature against the stored secret.
+### Authentication
+- **`/register`** — Called on the production line by trusted equipment. Secure with an **API key** (`X-API-Key` header) or **mTLS** so only authorized manufacturing stations can create devices.
+- **`/ping` and `/config`** — Called by deployed devices. Secure with a **Bearer token** (JWT or opaque token) issued at registration time, or **HMAC-signed requests** using a per-device shared secret injected during production.
 
 ### Rate Limiting
-
-- Implement per-IP and per-device rate limiting (e.g., 10 requests/second) to prevent abuse.
-- Use a Redis-backed rate limiter for distributed deployments.
-
-### Input Validation
-
-- All endpoints enforce strict Pydantic validation.
-- MAC addresses are normalized and validated against IEEE 802 format.
-- Config payload size is implicitly bounded by JSON parser limits; explicit max size middleware is recommended.
+- Apply per-device rate limiting (e.g., 100 requests/minute) to prevent abuse.
 
 ---
 
-## License
+## Project Structure
 
-This project is provided as a coding challenge submission.
+```
+app/
+  __init__.py
+  settings.py       # 2 environment variables (DATABASE_URL, ENVIRONMENT)
+  database.py       # Sync SQLAlchemy engine + session dependency
+  models.py         # Device and Configuration tables
+  api.py            # 3 endpoints + inline Pydantic schemas + inline business logic
+  main.py           # FastAPI app factory with lifespan
+tests/
+  conftest.py       # Sync fixtures: in-memory SQLite, TestClient
+  test_api.py       # 17 tests covering all endpoints
+requirements.txt    # 6 dependencies
+Dockerfile
+docker-compose.yml
+README.md
+```
+
+**Total source files:** ~10 (down from ~20).  
+**Total dependencies:** 6 (down from 10+).
