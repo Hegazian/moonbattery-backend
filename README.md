@@ -1,119 +1,156 @@
 # moonBattery IoT Backend
 
-A simple, production-ready REST API for managing moonBattery energy storage devices. Built with **Python 3.12**, **FastAPI**, and **PostgreSQL**.
+A small REST API for registering moonBattery devices, recording device pings, and storing device configuration key-value pairs. Built with **Python 3.12**, **FastAPI**, **SQLAlchemy 2.0**, and **PostgreSQL**.
 
 > **Experience level:** Intermediate with Python, FastAPI, and SQLAlchemy. I chose technologies I am comfortable with and that are well-suited for this scope.
 
----
+## Challenge Scope
 
-## Technology Choices & Justifications
+The source challenge is [coding-challenge-backend.md](coding-challenge-backend.md). It asks for:
 
-| Technology | Why It Was Chosen |
-|-----------|-------------------|
-| **Python 3.12** | Allowed by the spec. Readable, widely used, excellent ecosystem. I have intermediate experience. |
-| **FastAPI** | Best modern Python web framework. Automatic OpenAPI docs at `/docs`, built-in Pydantic validation, standard ASGI. Saves writing boilerplate validation and documentation code. |
-| **SQLAlchemy 2.0** | The standard Python ORM. Clean declarative API, works with any SQL database, excellent documentation. More stable and standard than SQLModel (which is a wrapper around SQLAlchemy). |
-| **PostgreSQL** | Production-grade open-source RDBMS. ACID compliance, handles concurrent writes safely (critical for IoT), better data integrity than SQLite. The spec says "database of your choice" — this is the safest production choice. |
-| **Pydantic** | Required by FastAPI for request/response validation. Gives us automatic MAC address format checking and clear 422 errors without manual validation code. |
-| **pytest + TestClient** | The spec requires tests. pytest is the Python standard. FastAPI's `TestClient` gives full HTTP round-trip testing without starting a server. |
-| **Docker + Docker Compose** | The spec requires documenting setup. `docker compose up` gives reviewers a one-command way to run PostgreSQL + the API. This is the simplest possible onboarding. |
-| **Synchronous code** | The spec has 3 simple CRUD endpoints with no concurrency requirements. Async (asyncpg, async SQLAlchemy, aiosqlite) adds significant complexity: greenlet dependencies, special test fixtures, harder debugging. Sync code is simpler, more readable, and easier to test. |
-| **No Alembic** | For 2 tables in a coding challenge, Alembic is overkill. `SQLAlchemy.metadata.create_all()` on startup achieves the same result. In a real production system with many tables and a team, Alembic would be essential. |
-| **No Poetry** | `requirements.txt` is the universal Python standard. Every developer understands it instantly. Poetry adds a learning curve and configuration burden not justified for this scope. |
-| **`os.environ` instead of pydantic-settings** | Overkill for 2 environment variables. `os.environ.get()` has zero dependencies and is immediately obvious. |
-| **Single `app/api.py`** | 3 endpoints do not need 3 router files + a service layer + a schemas file. Consolidating into one file reduces directory sprawl and makes the codebase navigable at a glance. |
+- A register endpoint that accepts a unique MAC address and returns a serial number.
+- A ping endpoint that stores the device's last contact time.
+- A configuration endpoint that accepts one or more key-value pairs.
+- Production-minded organization, design, documentation, and tests.
+- A README with setup instructions.
+- Bonus documentation for securing device communication.
 
----
+For requirement traceability, UML, code links, and test mapping, see [REQUIREMENTS_TRACEABILITY.md](REQUIREMENTS_TRACEABILITY.md).
+
+## Technology Choices
+
+| Technology | Why it was chosen |
+| --- | --- |
+| Python 3.12 | Allowed by the spec, readable, widely used, and easy to maintain. |
+| FastAPI | Gives request validation, response models, and OpenAPI docs at `/docs` with very little boilerplate. |
+| SQLAlchemy 2.0 | Standard Python ORM with clear declarative models and PostgreSQL support. |
+| PostgreSQL | Production-grade relational database with strong consistency for concurrent IoT writes. |
+| Pydantic | Validates request payloads, including MAC address and configuration shape. |
+| pytest + TestClient | Covers behavior through HTTP-level integration tests without starting a server. |
+| Docker Compose | Gives developers a one-command API + database setup. |
+
+The code is synchronous on purpose. The challenge has three simple write endpoints, and synchronous SQLAlchemy keeps the implementation easier to read, test, and explain. Database migrations are also intentionally omitted for this challenge-sized schema; `metadata.create_all()` creates the two tables on startup. In a long-lived production product, Alembic migrations would be the next step.
 
 ## Quick Start
 
 ### Prerequisites
-- Docker & Docker Compose
+
+- Docker and Docker Compose
 
 ### Run with Docker Compose
+
 ```bash
 docker compose up --build
 ```
-The API is available at `http://localhost:8000`.
-Interactive docs: `http://localhost:8000/docs`
 
-### Run Tests
+The API is available at `http://localhost:8000`.
+
+Interactive API docs are available at `http://localhost:8000/docs`.
+
+### Run Tests Locally
+
 ```bash
 pip install -r requirements.txt
 pytest -q
 ```
 
----
-
 ## API Endpoints
 
 ### Register a Device
+
 ```bash
 curl -X POST http://localhost:8000/register \
   -H "Content-Type: application/json" \
   -d '{"mac_address": "aa:bb:cc:dd:ee:ff"}'
 ```
-**Response `201 Created`:**
+
+Response `201 Created`:
+
 ```json
-{"serial_number": 1, "mac_address": "aa:bb:cc:dd:ee:ff", "created_at": "2024-01-15T09:30:00"}
+{
+  "serial_number": 1,
+  "mac_address": "aa:bb:cc:dd:ee:ff",
+  "created_at": "2024-01-15T09:30:00Z"
+}
 ```
 
+Registration is idempotent by MAC address. Re-registering the same MAC returns the same serial number.
+
 ### Ping a Device
+
 ```bash
 curl -X POST http://localhost:8000/ping \
   -H "Content-Type: application/json" \
   -d '{"serial_number": 1}'
 ```
-**Response `200 OK`:**
+
+Response `200 OK`:
+
 ```json
-{"serial_number": 1, "last_ping_at": "2024-01-15T10:00:00", "status": "ok"}
+{
+  "serial_number": 1,
+  "last_ping_at": "2024-01-15T10:00:00Z",
+  "status": "ok"
+}
 ```
 
 ### Update Configuration
+
 ```bash
 curl -X POST http://localhost:8000/config \
   -H "Content-Type: application/json" \
   -d '{"serial_number": 1, "configs": {"power_mode": "eco", "max_charge": "80"}}'
 ```
-**Response `200 OK`:**
+
+Response `200 OK`:
+
 ```json
-{"serial_number": 1, "updated_keys": ["power_mode", "max_charge"], "status": "ok"}
+{
+  "serial_number": 1,
+  "updated_keys": ["power_mode", "max_charge"],
+  "status": "ok"
+}
 ```
 
----
+The endpoint accepts one or more configuration pairs. Existing keys are updated, new keys are inserted.
 
-## Security Considerations (Bonus)
+## Security Considerations
 
 ### Transport
-- All endpoints must use **HTTPS** with TLS 1.2+.
+
+All endpoints should run behind HTTPS with TLS 1.2+.
 
 ### Authentication
-- **`/register`** — Called on the production line by trusted equipment. Secure with an **API key** (`X-API-Key` header) or **mTLS** so only authorized manufacturing stations can create devices.
-- **`/ping` and `/config`** — Called by deployed devices. Secure with a **Bearer token** (JWT or opaque token) issued at registration time, or **HMAC-signed requests** using a per-device shared secret injected during production.
 
-### Rate Limiting
-- Apply per-device rate limiting (e.g., 100 requests/minute) to prevent abuse.
+| Endpoint | Recommended protection |
+| --- | --- |
+| `/register` | API key or mTLS for trusted production-line equipment. |
+| `/ping` | Per-device bearer token or HMAC-signed requests. |
+| `/config` | Same per-device authentication as `/ping`, plus authorization checks if future admin writes are added. |
 
----
+### Operational Controls
+
+- Rate-limit by device serial number and source IP.
+- Store secrets outside source control.
+- Log rejected requests without leaking credentials.
+- Add a `/health` endpoint before deploying behind a load balancer.
 
 ## Project Structure
 
-```
+```text
 app/
   __init__.py
-  settings.py       # 2 environment variables (DATABASE_URL, ENVIRONMENT)
-  database.py       # Sync SQLAlchemy engine + session dependency
+  settings.py       # Environment variables
+  database.py       # SQLAlchemy engine and session dependency
   models.py         # Device and Configuration tables
-  api.py            # 3 endpoints + inline Pydantic schemas + inline business logic
-  main.py           # FastAPI app factory with lifespan
+  api.py            # Schemas, validation, and endpoint handlers
+  main.py           # FastAPI app and startup table creation
 tests/
-  conftest.py       # Sync fixtures: in-memory SQLite, TestClient
-  test_api.py       # 17 tests covering all endpoints
-requirements.txt    # 6 dependencies
+  conftest.py       # Isolated SQLite test database fixtures
+  test_api.py       # HTTP-level endpoint tests
+requirements.txt
 Dockerfile
 docker-compose.yml
 README.md
+REQUIREMENTS_TRACEABILITY.md
 ```
-
-**Total source files:** ~10 (down from ~20).  
-**Total dependencies:** 6 (down from 10+).

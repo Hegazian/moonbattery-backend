@@ -9,7 +9,6 @@ os.environ["ENVIRONMENT"] = "test"
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.database import engine as test_engine, get_db
@@ -30,8 +29,9 @@ def override_get_db() -> Generator[Session, None, None]:
 app.dependency_overrides[get_db] = override_get_db
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(autouse=True)
 def setup_database() -> Generator[None, None, None]:
+    Base.metadata.drop_all(bind=test_engine)
     Base.metadata.create_all(bind=test_engine)
     yield
     Base.metadata.drop_all(bind=test_engine)

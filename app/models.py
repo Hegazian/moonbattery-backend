@@ -1,9 +1,14 @@
 """SQLAlchemy 2.0 declarative models."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+def utc_now() -> datetime:
+    """Return a timezone-aware UTC timestamp."""
+    return datetime.now(timezone.utc)
 
 
 class Base(DeclarativeBase):
@@ -19,12 +24,11 @@ class Device(Base):
     mac_address: Mapped[str] = mapped_column(
         String(17), unique=True, nullable=False, index=True
     )
-    serial_number: Mapped[int | None] = mapped_column(
-        Integer, unique=True, nullable=True, index=True
+    last_ping_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
-    last_ping_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, server_default=func.now()
+        DateTime(timezone=True), nullable=False, default=utc_now
     )
 
 
@@ -41,5 +45,5 @@ class Configuration(Base):
     key: Mapped[str] = mapped_column(String(255), nullable=False)
     value: Mapped[str] = mapped_column(String, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, server_default=func.now(), onupdate=func.now()
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
     )
