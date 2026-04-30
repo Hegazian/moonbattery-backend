@@ -3,7 +3,7 @@
 import re
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -13,6 +13,8 @@ from app.database import get_db
 from app.models import Configuration, Device
 
 router = APIRouter()
+
+ConfigValue = str | int | float | bool
 
 
 # ---------------------------------------------------------------------------
@@ -50,11 +52,11 @@ class PingResponse(BaseModel):
 
 class ConfigRequest(BaseModel):
     serial_number: int = Field(..., gt=0)
-    configs: dict[str, str] = Field(..., min_length=1)
+    configs: dict[str, ConfigValue] = Field(..., min_length=1)
 
     @field_validator("configs")
     @classmethod
-    def _validate_configs(cls, v: dict[str, str]) -> dict[str, str]:
+    def _validate_configs(cls, v: dict[str, ConfigValue]) -> dict[str, ConfigValue]:
         for key in v:
             if not key.strip():
                 raise ValueError("Configuration keys must not be blank")
@@ -69,16 +71,48 @@ class ConfigResponse(BaseModel):
     status: str = "ok"
 
 
+class HealthResponse(BaseModel):
+    status: str = "ok"
+
+
+def _config_value_to_string(value: ConfigValue) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def _apply_config_changes(
+    db: Session, device_id: int, configs: dict[str, ConfigValue]
+) -> list[str]:
+    updated_keys: list[str] = []
+    for key, raw_value in configs.items():
+        value = _config_value_to_string(raw_value)
+        config = db.scalar(
+            select(Configuration).where(
+                Configuration.device_id == device_id, Configuration.key == key
+            )
+        )
+        if config:
+            config.value = value
+        else:
+            db.add(Configuration(device_id=device_id, key=key, value=value))
+        updated_keys.append(key)
+    return updated_keys
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
 
 @router.post("/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
-def register(request: RegisterRequest, db: Session = Depends(get_db)) -> RegisterResponse:
+def register(
+    request: RegisterRequest, response: Response, db: Session = Depends(get_db)
+) -> RegisterResponse:
     """Register a device by MAC address. Returns existing device if MAC already registered."""
     existing = db.scalar(select(Device).where(Device.mac_address == request.mac_address))
     if existing:
+        response.status_code = status.HTTP_200_OK
         return RegisterResponse(
             serial_number=existing.id,
             mac_address=existing.mac_address,
@@ -101,6 +135,12 @@ def register(request: RegisterRequest, db: Session = Depends(get_db)) -> Registe
         mac_address=device.mac_address,
         created_at=device.created_at,
     )
+
+
+@router.get("/health", response_model=HealthResponse)
+def health() -> HealthResponse:
+    """Return a lightweight health signal for local orchestration."""
+    return HealthResponse()
 
 
 @router.post("/ping", response_model=PingResponse)
@@ -127,18 +167,11 @@ def update_config(request: ConfigRequest, db: Session = Depends(get_db)) -> Conf
     if device is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
 
-    updated_keys: list[str] = []
-    for key, value in request.configs.items():
-        config = db.scalar(
-            select(Configuration).where(
-                Configuration.device_id == device.id, Configuration.key == key
-            )
-        )
-        if config:
-            config.value = value
-        else:
-            db.add(Configuration(device_id=device.id, key=key, value=value))
-        updated_keys.append(key)
-
-    db.commit()
+    updated_keys = _apply_config_changes(db, device.id, request.configs)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        updated_keys = _apply_config_changes(db, request.serial_number, request.configs)
+        db.commit()
     return ConfigResponse(serial_number=request.serial_number, updated_keys=updated_keys)

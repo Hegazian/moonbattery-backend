@@ -19,6 +19,7 @@ This document extracts a simple requirement set from [coding-challenge-backend.m
 | R-11 | The project shall include setup and API documentation. | Challenge: README requirement |
 | R-12 | The project shall document how endpoint communication should be secured. | Challenge: authentication bonus |
 | R-13 | The project shall include automated tests for the required behavior. | Challenge: test your code |
+| R-14 | The backend should expose a lightweight health endpoint for integration checks. | Operational readiness enhancement |
 
 ## Simple UML Design
 
@@ -36,6 +37,7 @@ flowchart LR
     Factory -->|POST /register| API
     Device -->|POST /ping| API
     Device -->|POST /config| API
+    Operator["Orchestrator / Load Balancer"] -->|GET /health| API
     API --> Validation
     API --> Session
     Session --> DB
@@ -131,11 +133,12 @@ sequenceDiagram
 | R-06 | Ping sequence timestamp update | [ping](app/api.py), `last_ping_at` in [Device](app/models.py) | [test_ping_existing_device](tests/test_api.py), [test_ping_updates_timestamp](tests/test_api.py) |
 | R-07 | Ping sequence unknown-device branch | [ping](app/api.py) | [test_ping_unknown_device](tests/test_api.py), [test_ping_invalid_serial](tests/test_api.py), [test_ping_empty_body](tests/test_api.py) |
 | R-08 | Configuration sequence | [ConfigRequest](app/api.py), [update_config](app/api.py) | [test_config_create_keys](tests/test_api.py) |
-| R-09 | Configuration insert/update loop | [update_config](app/api.py), [Configuration](app/models.py) | [test_config_create_keys](tests/test_api.py), [test_config_update_existing](tests/test_api.py), [test_config_persists_values](tests/test_api.py) |
-| R-10 | Config validation and unknown-device branch | [ConfigRequest._validate_configs](app/api.py), [update_config](app/api.py) | [test_config_empty_configs](tests/test_api.py), [test_config_blank_key](tests/test_api.py), [test_config_missing_configs](tests/test_api.py), [test_config_unknown_device](tests/test_api.py) |
+| R-09 | Configuration insert/update loop | [update_config](app/api.py), [Configuration](app/models.py) | [test_config_create_keys](tests/test_api.py), [test_config_update_existing](tests/test_api.py), [test_config_persists_values](tests/test_api.py), [test_config_accepts_scalar_values](tests/test_api.py) |
+| R-10 | Config validation and unknown-device branch | [ConfigRequest._validate_configs](app/api.py), [update_config](app/api.py) | [test_config_empty_configs](tests/test_api.py), [test_config_blank_key](tests/test_api.py), [test_config_rejects_long_key](tests/test_api.py), [test_config_missing_configs](tests/test_api.py), [test_config_unknown_device](tests/test_api.py) |
 | R-11 | Documentation | [README.md](README.md), [coding-challenge-backend.md](coding-challenge-backend.md) | Reviewed manually |
 | R-12 | Security documentation | [README.md](README.md) security section | Reviewed manually |
 | R-13 | Automated tests | Test database fixtures and API tests | [tests/conftest.py](tests/conftest.py), [tests/test_api.py](tests/test_api.py) |
+| R-14 | Health check | [health](app/api.py), Docker Compose app healthcheck | [test_health](tests/test_api.py) |
 
 ## Acceptance Criteria
 
@@ -150,9 +153,10 @@ sequenceDiagram
 | R-10 | Empty config maps, blank keys, missing fields, and unknown devices are rejected. |
 | R-11/R-12 | README explains setup, endpoint usage, technology choices, and security approach. |
 | R-13 | The test suite exercises all endpoint success and error paths above. |
+| R-14 | `GET /health` returns `200` and `status: ok`. |
 
 ## Engineering Notes
 
 - The API uses the database primary key as the device serial number. This keeps serial assignment atomic and avoids a second write after registration.
-- The implementation is intentionally compact because the challenge has three endpoints. If this became a larger product, the next natural steps would be Alembic migrations, authentication middleware, a health endpoint, and separate modules once the business logic grows.
+- The implementation is intentionally compact because the challenge has three core write endpoints. If this became a larger product, the next natural steps would be Alembic migrations, authentication middleware, and separate modules once the business logic grows.
 - The tests run against SQLite in memory for speed, while Docker Compose runs the application against PostgreSQL for realistic local execution.

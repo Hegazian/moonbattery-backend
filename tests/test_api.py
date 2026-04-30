@@ -10,6 +10,17 @@ from app.models import Configuration, Device
 
 
 # ---------------------------------------------------------------------------
+# Health
+# ---------------------------------------------------------------------------
+
+
+def test_health(client: TestClient) -> None:
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
 # Register
 # ---------------------------------------------------------------------------
 
@@ -30,6 +41,8 @@ def test_register_idempotent(client: TestClient) -> None:
     mac = "aa:bb:cc:dd:ee:ff"
     r1 = client.post("/register", json={"mac_address": mac})
     r2 = client.post("/register", json={"mac_address": mac})
+    assert r1.status_code == 201
+    assert r2.status_code == 200
     assert r1.json()["serial_number"] == r2.json()["serial_number"]
 
 
@@ -162,6 +175,17 @@ def test_config_blank_key(client: TestClient) -> None:
     assert response.status_code == 422
 
 
+def test_config_rejects_long_key(client: TestClient) -> None:
+    reg = client.post("/register", json={"mac_address": "aa:bb:cc:dd:ee:ff"})
+    serial = reg.json()["serial_number"]
+
+    response = client.post(
+        "/config",
+        json={"serial_number": serial, "configs": {"x" * 256: "value"}},
+    )
+    assert response.status_code == 422
+
+
 def test_config_missing_configs(client: TestClient) -> None:
     reg = client.post("/register", json={"mac_address": "aa:bb:cc:dd:ee:ff"})
     serial = reg.json()["serial_number"]
@@ -187,3 +211,25 @@ def test_config_persists_values(client: TestClient, db: Session) -> None:
     }
     assert configs["mode"] == "sleep"
     assert configs["brightness"] == "10"
+
+
+def test_config_accepts_scalar_values(client: TestClient, db: Session) -> None:
+    reg = client.post("/register", json={"mac_address": "aa:bb:cc:dd:ee:ff"})
+    serial = reg.json()["serial_number"]
+
+    response = client.post(
+        "/config",
+        json={
+            "serial_number": serial,
+            "configs": {"max_charge": 80, "safe_mode": True, "voltage": 12.5},
+        },
+    )
+    assert response.status_code == 200
+
+    configs = {
+        c.key: c.value
+        for c in db.scalars(select(Configuration).where(Configuration.device_id == serial)).all()
+    }
+    assert configs["max_charge"] == "80"
+    assert configs["safe_mode"] == "true"
+    assert configs["voltage"] == "12.5"

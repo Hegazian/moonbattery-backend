@@ -31,6 +31,13 @@ For requirement traceability, UML, code links, and test mapping, see [REQUIREMEN
 
 The code is synchronous on purpose. The challenge has three simple write endpoints, and synchronous SQLAlchemy keeps the implementation easier to read, test, and explain. Database migrations are also intentionally omitted for this challenge-sized schema; `metadata.create_all()` creates the two tables on startup. In a long-lived production product, Alembic migrations would be the next step.
 
+## Assumptions and Decisions
+
+- The database primary key is used as the device serial number. This keeps serial assignment atomic and easy to reason about.
+- Registration is idempotent by MAC address so factory retries do not create duplicate devices.
+- Configuration values are accepted as strings, numbers, or booleans and stored as strings for a simple device-facing key-value model.
+- Authentication is documented below but intentionally not implemented, because the challenge lists it as a bonus documentation topic.
+
 ## Quick Start
 
 ### Prerequisites
@@ -46,6 +53,12 @@ docker compose up --build
 The API is available at `http://localhost:8000`.
 
 Interactive API docs are available at `http://localhost:8000/docs`.
+
+Health check:
+
+```bash
+curl http://localhost:8000/health
+```
 
 ### Run Tests Locally
 
@@ -74,7 +87,7 @@ Response `201 Created`:
 }
 ```
 
-Registration is idempotent by MAC address. Re-registering the same MAC returns the same serial number.
+Registration is idempotent by MAC address. Re-registering the same MAC returns `200 OK` with the same serial number.
 
 ### Ping a Device
 
@@ -113,6 +126,16 @@ Response `200 OK`:
 ```
 
 The endpoint accepts one or more configuration pairs. Existing keys are updated, new keys are inserted.
+Values may be strings, numbers, or booleans. They are stored as strings to keep the device configuration model simple and portable.
+
+## Endpoint Status Codes
+
+| Endpoint | Success | Common errors |
+| --- | --- | --- |
+| `GET /health` | `200 OK` | None expected for an in-process health signal. |
+| `POST /register` | `201 Created` for a new MAC, `200 OK` for an existing MAC | `422 Unprocessable Entity` for invalid payloads or MAC addresses. |
+| `POST /ping` | `200 OK` | `404 Not Found` for unknown serial numbers, `422 Unprocessable Entity` for invalid payloads. |
+| `POST /config` | `200 OK` | `404 Not Found` for unknown serial numbers, `422 Unprocessable Entity` for empty configs, blank keys, long keys, or invalid payloads. |
 
 ## Security Considerations
 
@@ -133,7 +156,7 @@ All endpoints should run behind HTTPS with TLS 1.2+.
 - Rate-limit by device serial number and source IP.
 - Store secrets outside source control.
 - Log rejected requests without leaking credentials.
-- Add a `/health` endpoint before deploying behind a load balancer.
+- Use the existing `/health` endpoint for container and load balancer checks.
 
 ## Project Structure
 
